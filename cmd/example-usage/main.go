@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/asjoyner/wiegand-go"
 )
 
 func main() {
@@ -45,8 +47,6 @@ func main() {
 	}()
 
 	// Keep program running to process Wiegand data
-	select {
-	case <-ctx.Done():
-		fmt.Println("Shutting down Wiegand reader")
-	}
+	<-ctx.Done()
+	fmt.Println("Shutting down Wiegand reader")
 }
