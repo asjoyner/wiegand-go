@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"periph.io/x/conn/v3/gpio"
-    	"periph.io/x/host/v3"
+	"periph.io/x/conn/v3/gpio/gpioreg"
+	"periph.io/x/host/v3"
 )
 
 // Reader represents a Wiegand reader instance, managing GPIO pins and data collection.
@@ -65,8 +66,8 @@ func New(ctx context.Context, cfg Config) (*Reader, error) {
 	}
 
 	// Look up GPIO pins
-	d0 := gpio.ByName(cfg.D0Pin)
-	d1 := gpio.ByName(cfg.D1Pin)
+	d0 := gpioreg.ByName(cfg.D0Pin)
+	d1 := gpioreg.ByName(cfg.D1Pin)
 	if d0 == nil || d1 == nil {
 		return nil, fmt.Errorf("invalid GPIO pins: D0=%s, D1=%s", cfg.D0Pin, cfg.D1Pin)
 	}

@@ -8,9 +8,8 @@ import (
 
 func TestNewReader(t *testing.T) {
 	// Mock callback
-	var received string
 	callback := func(data string) {
-		received = data
+		// pass
 	}
 
 	// Create context
