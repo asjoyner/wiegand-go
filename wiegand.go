@@ -109,10 +109,12 @@ func (r *Reader) watchPin(pin gpio.PinIO, bit byte) {
 			return
 		default:
 			// Wait for a rising edge (optocoupler pulls GPIO high when active)
-			if pin.WaitForEdge(-1) && pin.Read() == gpio.High {
+			//fmt.Println("saw falling edge: ", pin)
+			if pin.WaitForEdge(100 * time.Millisecond) && pin.Read() == gpio.High {
 				r.mu.Lock()
 				r.data = append(r.data, bit)
 				r.mu.Unlock()
+				fmt.Println("saw edge")
 			}
 		}
 	}

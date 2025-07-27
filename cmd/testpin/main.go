@@ -9,7 +9,7 @@ import (
 
 func main() {
 	// Define a flag for GPIO pins, defaulting to an empty string
-	pinsFlag := flag.String("pins", "", "Comma-separated list of GPIO pins to test (e.g., GPIO4,GPIO17). If empty, all pins are used.")
+	pinsFlag := flag.String("pins", "GPIO4,GPIO17,GPIO18,GPIO27,GPIO22,GPIO23,GPIO24,GPIO25", "Comma-separated list of GPIO pins to test (e.g., GPIO4,GPIO17). If empty, all pins are used.")
 	flag.Parse()
 
 	// Parse the comma-separated list of pins
