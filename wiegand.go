@@ -132,14 +132,56 @@ func checkParity(bits []byte, start, length int, even bool) bool {
 	return parity%2 == 1
 }
 
-// bitsToTag converts a slice of bits to a decimal string, applying shift and mask.
-func bitsToTag(bits []byte, shift, maskBits int) string {
-	var num uint64
-	for _, bit := range bits {
-		num = (num << 1) | uint64(bit)
+// decodeBits converts a slice of bits into a site code and tag value by directly accumulating
+// the relevant bit ranges. The site code is derived from a range specified by 'siteCodeStart'
+// and 'siteCodeLength'. The tag value is computed from a range starting at 'tagStart' with
+// a width of 'tagLength'. The function assumes the input bits are ordered most significant bit
+// first, as per the standard Wiegand protocol. If the input slice is too short to support the
+// requested ranges, or contains invalid bit values, an error is returned.
+//
+// The function assumes the input bits are a sequence where each byte is either 0 or 1.
+// The siteCodeStart and tagStart are 0-based indices, where bits[0] is the first bit received
+// (MSB). The returned site code and tag value are formatted as decimal strings.
+//
+// Example usage:
+//
+//	bits := []byte{1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0}
+//	site, tag, err := decodeBits(bits, 1, 8, 1, 24)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Println(site, tag) // Outputs site code and tag value, e.g., "1" and "21845"
+func decodeBits(bits []byte, siteCodeStart, siteCodeLength, tagStart, tagLength int) (string, string, error) {
+	// Validate input length against site code and tag requirements.
+	if len(bits) < tagStart+tagLength {
+		return "", "", fmt.Errorf("input slice too short: need at least %d bits for tag start and length, got %d", tagStart+tagLength, len(bits))
 	}
-	num = (num >> uint(shift)) & ((1 << uint(maskBits)) - 1)
-	return fmt.Sprintf("%d", num)
+	if siteCodeStart+siteCodeLength > len(bits) {
+		return "", "", fmt.Errorf("site code range (%d to %d) exceeds input length %d", siteCodeStart, siteCodeStart+siteCodeLength-1, len(bits))
+	}
+
+	// Validate bit values.
+	for _, bit := range bits {
+		if bit != 0 && bit != 1 {
+			return "", "", fmt.Errorf("invalid bit value: %d, expected 0 or 1", bit)
+		}
+	}
+
+	var siteCode, tagValue uint64
+
+	// Accumulate site code from the specified range.
+	for i := 0; i < siteCodeLength; i++ {
+		bitIndex := siteCodeStart + i
+		siteCode = (siteCode << 1) | uint64(bits[bitIndex])
+	}
+
+	// Accumulate tag value from the specified range.
+	for i := 0; i < tagLength; i++ {
+		bitIndex := tagStart + i
+		tagValue = (tagValue << 1) | uint64(bits[bitIndex])
+	}
+
+	return fmt.Sprintf("%d", siteCode), fmt.Sprintf("%d", tagValue), nil
 }
 
 // processData collects Wiegand bits, detects complete frames, and invokes the callback.
@@ -174,28 +216,40 @@ func (r *Reader) processData() {
 
 			switch len(data) {
 			case 26:
-				tag := bitsToTag(data, 1, 24)
-				if !checkParity(data, 0, 13, true) || !checkParity(data, 13, 13, false) {
-					fmt.Printf("Invalid parity for 26-bit tag: %s\n", tag)
+				tag, site, err := decodeBits(data, 1, 8, 9, 16)
+				if err != nil {
+					fmt.Println("bug in calling decodeBits for 24b tag")
 					continue
 				}
-				fmt.Printf("Received 26-bit tag: %s\n", tag)
+				if !checkParity(data, 0, 13, true) || !checkParity(data, 13, 13, false) {
+					fmt.Printf("Invalid parity for 26-bit tag: %s (%s)\n", tag, site)
+					continue
+				}
+				fmt.Printf("Received 26-bit tag: %s (%s)\n", tag, site)
 				go r.callback(tag)
 			case 34:
-				tag := bitsToTag(data, 1, 32)
-				if !checkParity(data, 0, 17, true) || !checkParity(data, 17, 17, false) {
-					fmt.Printf("Invalid parity for 34-bit tag: %s\n", tag)
+				tag, site, err := decodeBits(data, 1, 17, 18, 16)
+				if err != nil {
+					fmt.Println("bug in calling decodeBits for 34b tag")
 					continue
 				}
-				fmt.Printf("Received 34-bit tag: %s\n", tag)
+				if !checkParity(data, 0, 17, true) || !checkParity(data, 17, 17, false) {
+					fmt.Printf("Invalid parity for 34-bit tag: %s\n (%s)", tag, site)
+					continue
+				}
+				fmt.Printf("Received 34-bit tag: %s (%s)\n", tag, site)
 				go r.callback(tag)
 			case 37:
-				tag := bitsToTag(data, 1, 35)
-				if !checkParity(data, 0, 19, true) || !checkParity(data, 19, 18, false) {
-					fmt.Printf("Invalid parity for 37-bit tag: %s\n", tag)
+				tag, site, err := decodeBits(data, 1, 19, 20, 16)
+				if err != nil {
+					fmt.Println("bug in calling decodeBits for 37b tag")
 					continue
 				}
-				fmt.Printf("Received 37-bit tag: %s\n", tag)
+				if !checkParity(data, 0, 19, true) || !checkParity(data, 19, 18, false) {
+					fmt.Printf("Invalid parity for 37-bit tag: %s (%s)\n", tag, site)
+					continue
+				}
+				fmt.Printf("Received 37-bit tag: %s (%s)\n", tag, site)
 				go r.callback(tag)
 			default:
 				fmt.Printf("Received unknown %d-bit value\n", len(data))
