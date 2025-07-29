@@ -17,14 +17,16 @@ import (
 
 // Reader represents a Wiegand reader instance, managing GPIO pins and data collection.
 type Reader struct {
-	d0, d1   gpio.PinIO         // GPIO pins for Wiegand D0 and D1
-	data     []byte             // Buffer for collecting Wiegand bits
-	mu       sync.Mutex         // Protects data buffer
-	callback func(string)       // Callback to receive Wiegand data as digits
-	ctx      context.Context    // Context for cancellation
-	cancel   context.CancelFunc // Cancels the reader
-	timeout  time.Duration      // Timeout for detecting end of Wiegand frame
-	maxBits  int                // Maximum bits to collect (e.g., 26 for standard Wiegand)
+	d0, d1      gpio.PinIO         // GPIO pins for Wiegand D0 and D1
+	data        []byte             // Buffer for collecting Wiegand bits
+	lastBitTime time.Time          // Time of the last received bit
+	mu          sync.Mutex         // Protects data buffer and lastBitTime
+	callback    func(string)       // Callback to receive Wiegand data as digits
+	ctx         context.Context    // Context for cancellation
+	cancel      context.CancelFunc // Cancels the reader
+	timeout     time.Duration      // Timeout for detecting end of Wiegand frame
+	maxBits     int                // Maximum bits to collect (e.g., 26 for standard Wiegand)
+	pulse       chan bool          // Signals new pulse
 }
 
 // Config holds configuration for creating a new Wiegand Reader.
@@ -42,16 +44,11 @@ const DefaultTimeout = 100 * time.Millisecond
 const DefaultMaxBits = 26
 
 // New creates a new Wiegand Reader for the specified D0 and D1 GPIO pins.
-// It initializes the GPIO pins, sets up interrupt handling, and starts a goroutine
-// to process Wiegand data. The callback function receives the Wiegand data as a
-// string of digits. The Reader is thread-safe and can be stopped using the context.
 func New(ctx context.Context, cfg Config) (*Reader, error) {
-	// Initialize periph.io host
 	if _, err := host.Init(); err != nil {
 		return nil, fmt.Errorf("failed to initialize periph host: %w", err)
 	}
 
-	// Validate configuration
 	if cfg.D0Pin == "" || cfg.D1Pin == "" {
 		return nil, errors.New("D0Pin and D1Pin must be specified")
 	}
@@ -65,22 +62,19 @@ func New(ctx context.Context, cfg Config) (*Reader, error) {
 		cfg.MaxBits = DefaultMaxBits
 	}
 
-	// Look up GPIO pins
 	d0 := gpioreg.ByName(cfg.D0Pin)
 	d1 := gpioreg.ByName(cfg.D1Pin)
 	if d0 == nil || d1 == nil {
 		return nil, fmt.Errorf("invalid GPIO pins: D0=%s, D1=%s", cfg.D0Pin, cfg.D1Pin)
 	}
 
-	// Configure pins as inputs with pull-down resistors (for optocoupler output)
-	if err := d0.In(gpio.PullDown, gpio.BothEdges); err != nil {
+	if err := d0.In(gpio.PullDown, gpio.FallingEdge); err != nil {
 		return nil, fmt.Errorf("failed to configure D0 pin %s: %w", cfg.D0Pin, err)
 	}
-	if err := d1.In(gpio.PullDown, gpio.BothEdges); err != nil {
+	if err := d1.In(gpio.PullDown, gpio.FallingEdge); err != nil {
 		return nil, fmt.Errorf("failed to configure D1 pin %s: %w", cfg.D1Pin, err)
 	}
 
-	// Create Reader
 	r := &Reader{
 		d0:       d0,
 		d1:       d1,
@@ -88,12 +82,11 @@ func New(ctx context.Context, cfg Config) (*Reader, error) {
 		callback: cfg.Callback,
 		timeout:  cfg.Timeout,
 		maxBits:  cfg.MaxBits,
+		pulse:    make(chan bool, 1), // Buffered to avoid blocking
 	}
 
-	// Create cancellable context
 	r.ctx, r.cancel = context.WithCancel(ctx)
 
-	// Start goroutines for reading pins and processing data
 	go r.watchPin(r.d0, 0)
 	go r.watchPin(r.d1, 1)
 	go r.processData()
@@ -101,59 +94,130 @@ func New(ctx context.Context, cfg Config) (*Reader, error) {
 	return r, nil
 }
 
-// watchPin monitors a GPIO pin for falling edges (Wiegand pulses via optocoupler) and sends bits to the data buffer.
+// watchPin monitors a GPIO pin for falling edges and sends bits to the data buffer.
 func (r *Reader) watchPin(pin gpio.PinIO, bit byte) {
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
 		default:
-			// Wait for a rising edge (optocoupler pulls GPIO high when active)
-			//fmt.Println("saw falling edge: ", pin)
-			if pin.WaitForEdge(100 * time.Millisecond) && pin.Read() == gpio.High {
+			if pin.WaitForEdge(100*time.Millisecond) && pin.Read() == gpio.Low { // Wait indefinitely for edge
+				fmt.Println("saw edge")
 				r.mu.Lock()
 				r.data = append(r.data, bit)
-				r.mu.Unlock()
-				fmt.Println("saw edge")
-			}
-		}
-	}
-}
-
-// processData collects Wiegand bits, detects complete frames, and invokes the callback.
-func (r *Reader) processData() {
-	ticker := time.NewTicker(r.timeout)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.ctx.Done():
-			return
-		case <-ticker.C:
-			r.mu.Lock()
-			if len(r.data) > 0 && len(r.data) <= r.maxBits {
-				// Convert bits to decimal string
-				data := bitsToDecimal(r.data)
-				r.data = r.data[:0] // Reset buffer
-				r.mu.Unlock()
-				// Invoke callback in a separate goroutine to avoid blocking
-				go r.callback(data)
-			} else {
-				// Clear buffer if too many bits or empty
-				r.data = r.data[:0]
+				r.lastBitTime = time.Now()
+				select {
+				case r.pulse <- true:
+				default:
+				}
 				r.mu.Unlock()
 			}
 		}
 	}
 }
 
-// bitsToDecimal converts a slice of bits (0s and 1s) to a decimal string.
-func bitsToDecimal(bits []byte) string {
+// checkParity calculates even or odd parity for a range of bits in the data.
+func checkParity(bits []byte, start, length int, even bool) bool {
+	if start+length > len(bits) {
+		return false
+	}
+	parity := 0
+	for i := start; i < start+length; i++ {
+		if bits[i] == 1 {
+			parity++
+		}
+	}
+	if even {
+		return parity%2 == 0
+	}
+	return parity%2 == 1
+}
+
+// bitsToTag converts a slice of bits to a decimal string, applying shift and mask.
+func bitsToTag(bits []byte, shift, maskBits int) string {
 	var num uint64
 	for _, bit := range bits {
 		num = (num << 1) | uint64(bit)
 	}
+	num = (num >> uint(shift)) & ((1 << uint(maskBits)) - 1)
 	return fmt.Sprintf("%d", num)
+}
+
+// processData collects Wiegand bits, detects complete frames, and invokes the callback.
+func (r *Reader) processData() {
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-r.pulse:
+			// Wait until timeout elapses since last bit
+			for time.Since(r.lastBitTime) < r.timeout {
+				select {
+				case <-r.pulse:
+					// New pulse received, reset timeout
+				case <-r.ctx.Done():
+					return
+				case <-time.After(r.timeout - time.Since(r.lastBitTime)):
+					// Timeout elapsed, process data
+				}
+			}
+			r.mu.Lock()
+			data := make([]byte, len(r.data)) // Copy data
+			copy(data, r.data)
+			r.data = r.data[:0] // Reset buffer
+			r.mu.Unlock()
+
+			if len(data) == 0 {
+				continue
+			}
+
+			fmt.Printf("Received %d-bit value: %v\n", len(data), data)
+
+			switch len(data) {
+			case 26:
+				if !checkParity(data, 1, 12, true) || !checkParity(data, 13, 13, false) {
+					fmt.Printf("Invalid parity for 26-bit tag\n")
+					continue
+				}
+				tag := bitsToTag(data, 1, 24)
+				fmt.Printf("Received 26-bit tag: %s\n", tag)
+				go r.callback(tag)
+			case 34:
+				if !checkParity(data, 1, 16, true) || !checkParity(data, 17, 17, false) {
+					fmt.Printf("Invalid parity for 34-bit tag\n")
+					continue
+				}
+				tag := bitsToTag(data, 1, 32)
+				fmt.Printf("Received 34-bit tag: %s\n", tag)
+				go r.callback(tag)
+			case 37:
+				if !checkParity(data, 1, 18, true) || !checkParity(data, 19, 18, false) {
+					fmt.Printf("Invalid parity for 37-bit tag\n")
+					continue
+				}
+				tag := bitsToTag(data, 1, 35)
+				fmt.Printf("Received 37-bit tag: %s\n", tag)
+				go r.callback(tag)
+			case 4, 8:
+				// Handle keypresses (simplified, add validation if needed)
+				var num uint64
+				for _, bit := range data {
+					num = (num << 1) | uint64(bit)
+				}
+				if len(data) == 8 && (num^0xf0)>>4 != (num&0xf) {
+					fmt.Printf("Invalid 8-bit key format\n")
+					continue
+				}
+				if num < 12 {
+					key := "0123456789*#"[num]
+					fmt.Printf("Received key: %c\n", key)
+					go r.callback(string(key))
+				}
+			default:
+				fmt.Printf("Received unknown %d-bit value\n", len(data))
+			}
+		}
+	}
 }
 
 // Close stops the Wiegand reader and releases resources.
