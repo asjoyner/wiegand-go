@@ -101,8 +101,7 @@ func (r *Reader) watchPin(pin gpio.PinIO, bit byte) {
 		case <-r.ctx.Done():
 			return
 		default:
-			if pin.WaitForEdge(100*time.Millisecond) && pin.Read() == gpio.Low { // Wait indefinitely for edge
-				fmt.Println("saw edge")
+			if pin.WaitForEdge(1*time.Second) && pin.Read() == gpio.Low { // Wait indefinitely for edge
 				r.mu.Lock()
 				r.data = append(r.data, bit)
 				r.lastBitTime = time.Now()
@@ -175,44 +174,29 @@ func (r *Reader) processData() {
 
 			switch len(data) {
 			case 26:
-				if !checkParity(data, 1, 12, true) || !checkParity(data, 13, 13, false) {
-					fmt.Printf("Invalid parity for 26-bit tag\n")
+				tag := bitsToTag(data, 1, 24)
+				if !checkParity(data, 0, 13, true) || !checkParity(data, 13, 13, false) {
+					fmt.Printf("Invalid parity for 26-bit tag: %s\n", tag)
 					continue
 				}
-				tag := bitsToTag(data, 1, 24)
 				fmt.Printf("Received 26-bit tag: %s\n", tag)
 				go r.callback(tag)
 			case 34:
-				if !checkParity(data, 1, 16, true) || !checkParity(data, 17, 17, false) {
-					fmt.Printf("Invalid parity for 34-bit tag\n")
+				tag := bitsToTag(data, 1, 32)
+				if !checkParity(data, 0, 17, true) || !checkParity(data, 17, 17, false) {
+					fmt.Printf("Invalid parity for 34-bit tag: %s\n", tag)
 					continue
 				}
-				tag := bitsToTag(data, 1, 32)
 				fmt.Printf("Received 34-bit tag: %s\n", tag)
 				go r.callback(tag)
 			case 37:
-				if !checkParity(data, 1, 18, true) || !checkParity(data, 19, 18, false) {
-					fmt.Printf("Invalid parity for 37-bit tag\n")
+				tag := bitsToTag(data, 1, 35)
+				if !checkParity(data, 0, 19, true) || !checkParity(data, 19, 18, false) {
+					fmt.Printf("Invalid parity for 37-bit tag: %s\n", tag)
 					continue
 				}
-				tag := bitsToTag(data, 1, 35)
 				fmt.Printf("Received 37-bit tag: %s\n", tag)
 				go r.callback(tag)
-			case 4, 8:
-				// Handle keypresses (simplified, add validation if needed)
-				var num uint64
-				for _, bit := range data {
-					num = (num << 1) | uint64(bit)
-				}
-				if len(data) == 8 && (num^0xf0)>>4 != (num&0xf) {
-					fmt.Printf("Invalid 8-bit key format\n")
-					continue
-				}
-				if num < 12 {
-					key := "0123456789*#"[num]
-					fmt.Printf("Received key: %c\n", key)
-					go r.callback(string(key))
-				}
 			default:
 				fmt.Printf("Received unknown %d-bit value\n", len(data))
 			}
