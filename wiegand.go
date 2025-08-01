@@ -17,24 +17,26 @@ import (
 
 // Reader represents a Wiegand reader instance, managing GPIO pins and data collection.
 type Reader struct {
-	d0, d1      gpio.PinIO         // GPIO pins for Wiegand D0 and D1
-	data        []byte             // Buffer for collecting Wiegand bits
-	lastBitTime time.Time          // Time of the last received bit
-	mu          sync.Mutex         // Protects data buffer and lastBitTime
-	callback    func(string)       // Callback to receive Wiegand data as digits
-	ctx         context.Context    // Context for cancellation
-	cancel      context.CancelFunc // Cancels the reader
-	timeout     time.Duration      // Timeout for detecting end of Wiegand frame
-	maxBits     int                // Maximum bits to collect (e.g., 26 for standard Wiegand)
-	pulse       chan bool          // Signals new pulse
+	d0, d1      gpio.PinIO // GPIO pins for Wiegand D0 and D1
+	data        []byte     // Buffer for collecting Wiegand bits
+	lastBitTime time.Time  // Time of the last received bit
+	mu          sync.Mutex // Protects data buffer and lastBitTime
+	// Callback to receive Wiegand data, site + tag
+	callback func(string, string)
+	ctx      context.Context    // Context for cancellation
+	cancel   context.CancelFunc // Cancels the reader
+	timeout  time.Duration      // Timeout for detecting end of Wiegand frame
+	maxBits  int                // Maximum bits to collect (e.g., 26 for standard Wiegand)
+	pulse    chan bool          // Signals new pulse
 }
 
 // Config holds configuration for creating a new Wiegand Reader.
 type Config struct {
-	D0Pin, D1Pin string        // GPIO pin names (e.g., "GPIO14", "GPIO15")
-	Callback     func(string)  // Function to receive Wiegand data
-	Timeout      time.Duration // Timeout for frame completion (default 100ms)
-	MaxBits      int           // Maximum bits per frame (default 26)
+	D0Pin, D1Pin string // GPIO pin names (e.g., "GPIO14", "GPIO15")
+	// Callback to receive Wiegand data, site + tag
+	Callback func(string, string)
+	Timeout  time.Duration // Timeout for frame completion (default 100ms)
+	MaxBits  int           // Maximum bits per frame (default 26)
 }
 
 // DefaultTimeout is the default duration to wait for a complete Wiegand frame.
@@ -226,7 +228,7 @@ func (r *Reader) processData() {
 					continue
 				}
 				fmt.Printf("Received 26-bit tag: %s (%s)\n", tag, site)
-				go r.callback(tag)
+				go r.callback(site, tag)
 			case 34:
 				tag, site, err := decodeBits(data, 1, 17, 18, 16)
 				if err != nil {
@@ -238,7 +240,7 @@ func (r *Reader) processData() {
 					continue
 				}
 				fmt.Printf("Received 34-bit tag: %s (%s)\n", tag, site)
-				go r.callback(tag)
+				go r.callback(site, tag)
 			case 37:
 				tag, site, err := decodeBits(data, 1, 19, 20, 16)
 				if err != nil {
@@ -250,7 +252,7 @@ func (r *Reader) processData() {
 					continue
 				}
 				fmt.Printf("Received 37-bit tag: %s (%s)\n", tag, site)
-				go r.callback(tag)
+				go r.callback(site, tag)
 			default:
 				fmt.Printf("Received unknown %d-bit value\n", len(data))
 			}

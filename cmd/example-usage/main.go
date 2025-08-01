@@ -17,26 +17,61 @@ func main() {
 	defer cancel()
 
 	// Define callback to receive Wiegand data
-	callback := func(data string) {
-		fmt.Println("Received Wiegand data:", data)
+	callback := func(site, tag string) {
+		fmt.Println("Received Wiegand data: site: %s, tag: %s", site, tag)
 	}
 
-	// Configure Wiegand reader (use actual Raspberry Pi GPIO pins, e.g., GPIO14 and GPIO15)
-	cfg := wiegand.Config{
+	reader1, err := wiegand.New(ctx, wiegand.Config{
 		D0Pin:    "GPIO4",  // Wiegand D0 (e.g., green wire)
 		D1Pin:    "GPIO17", // Wiegand D1 (e.g., white wire)
 		Callback: callback,
 		Timeout:  100 * time.Millisecond,
 		MaxBits:  26,
-	}
-
-	// Initialize reader
-	reader, err := wiegand.New(ctx, cfg)
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize Wiegand reader: %v\n", err)
 		os.Exit(1)
 	}
-	defer reader.Close()
+	defer reader1.Close()
+
+	reader2, err := wiegand.New(ctx, wiegand.Config{
+		D0Pin:    "GPIO18",
+		D1Pin:    "GPIO27",
+		Callback: callback,
+		Timeout:  100 * time.Millisecond,
+		MaxBits:  26,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize Wiegand reader: %v\n", err)
+		os.Exit(1)
+	}
+	defer reader2.Close()
+
+	reader3, err := wiegand.New(ctx, wiegand.Config{
+		D0Pin:    "GPIO22",
+		D1Pin:    "GPIO23",
+		Callback: callback,
+		Timeout:  100 * time.Millisecond,
+		MaxBits:  26,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize Wiegand reader: %v\n", err)
+		os.Exit(1)
+	}
+	defer reader3.Close()
+
+	reader4, err := wiegand.New(ctx, wiegand.Config{
+		D0Pin:    "GPIO24",
+		D1Pin:    "GPIO25",
+		Callback: callback,
+		Timeout:  100 * time.Millisecond,
+		MaxBits:  26,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize Wiegand reader: %v\n", err)
+		os.Exit(1)
+	}
+	defer reader4.Close()
 
 	// Handle SIGINT/SIGTERM for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
