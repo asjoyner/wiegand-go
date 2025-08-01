@@ -218,7 +218,7 @@ func (r *Reader) processData() {
 
 			switch len(data) {
 			case 26:
-				tag, site, err := decodeBits(data, 1, 8, 9, 16)
+				site, tag, err := decodeBits(data, 1, 8, 9, 16)
 				if err != nil {
 					fmt.Println("bug in calling decodeBits for 24b tag")
 					continue
@@ -230,7 +230,7 @@ func (r *Reader) processData() {
 				fmt.Printf("Received 26-bit tag: %s (%s)\n", tag, site)
 				go r.callback(site, tag)
 			case 34:
-				tag, site, err := decodeBits(data, 1, 17, 18, 16)
+				site, tag, err := decodeBits(data, 1, 17, 18, 16)
 				if err != nil {
 					fmt.Println("bug in calling decodeBits for 34b tag")
 					continue
@@ -242,7 +242,7 @@ func (r *Reader) processData() {
 				fmt.Printf("Received 34-bit tag: %s (%s)\n", tag, site)
 				go r.callback(site, tag)
 			case 37:
-				tag, site, err := decodeBits(data, 1, 19, 20, 16)
+				site, tag, err := decodeBits(data, 1, 19, 20, 16)
 				if err != nil {
 					fmt.Println("bug in calling decodeBits for 37b tag")
 					continue
