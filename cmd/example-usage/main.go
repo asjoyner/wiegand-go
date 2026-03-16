@@ -18,7 +18,7 @@ func main() {
 
 	// Define callback to receive Wiegand data
 	callback := func(site, tag string) {
-		fmt.Println("Received Wiegand data: site: %s, tag: %s", site, tag)
+		fmt.Printf("Received Wiegand data: site: %s, tag: %s\n", site, tag)
 	}
 
 	reader1, err := wiegand.New(ctx, wiegand.Config{

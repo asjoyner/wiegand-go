@@ -22,12 +22,13 @@ type Reader struct {
 	lastBitTime time.Time  // Time of the last received bit
 	mu          sync.Mutex // Protects data buffer and lastBitTime
 	// Callback to receive Wiegand data, site + tag
-	callback func(string, string)
-	ctx      context.Context    // Context for cancellation
-	cancel   context.CancelFunc // Cancels the reader
-	timeout  time.Duration      // Timeout for detecting end of Wiegand frame
-	maxBits  int                // Maximum bits to collect (e.g., 26 for standard Wiegand)
-	pulse    chan bool          // Signals new pulse
+	callback      func(string, string)
+	errorCallback func(string) // Called on read errors (parity, unknown bit count)
+	ctx           context.Context    // Context for cancellation
+	cancel        context.CancelFunc // Cancels the reader
+	timeout       time.Duration      // Timeout for detecting end of Wiegand frame
+	maxBits       int                // Maximum bits to collect (e.g., 26 for standard Wiegand)
+	pulse         chan bool          // Signals new pulse
 }
 
 // Config holds configuration for creating a new Wiegand Reader.
@@ -35,8 +36,12 @@ type Config struct {
 	D0Pin, D1Pin string // GPIO pin names (e.g., "GPIO14", "GPIO15")
 	// Callback to receive Wiegand data, site + tag
 	Callback func(string, string)
-	Timeout  time.Duration // Timeout for frame completion (default 100ms)
-	MaxBits  int           // Maximum bits per frame (default 26)
+	// ErrorCallback is called on read errors (parity failures, unknown bit
+	// counts). The string describes the error. Optional; errors are logged
+	// to stdout if nil.
+	ErrorCallback func(string)
+	Timeout       time.Duration // Timeout for frame completion (default 100ms)
+	MaxBits       int           // Maximum bits per frame (default 26)
 }
 
 // DefaultTimeout is the default duration to wait for a complete Wiegand frame.
@@ -77,14 +82,20 @@ func New(ctx context.Context, cfg Config) (*Reader, error) {
 		return nil, fmt.Errorf("failed to configure D1 pin %s: %w", cfg.D1Pin, err)
 	}
 
+	errCb := cfg.ErrorCallback
+	if errCb == nil {
+		errCb = func(msg string) { fmt.Println(msg) }
+	}
+
 	r := &Reader{
-		d0:       d0,
-		d1:       d1,
-		data:     make([]byte, 0, cfg.MaxBits),
-		callback: cfg.Callback,
-		timeout:  cfg.Timeout,
-		maxBits:  cfg.MaxBits,
-		pulse:    make(chan bool, 1), // Buffered to avoid blocking
+		d0:            d0,
+		d1:            d1,
+		data:          make([]byte, 0, cfg.MaxBits),
+		callback:      cfg.Callback,
+		errorCallback: errCb,
+		timeout:       cfg.Timeout,
+		maxBits:       cfg.MaxBits,
+		pulse:         make(chan bool, 1), // Buffered to avoid blocking
 	}
 
 	r.ctx, r.cancel = context.WithCancel(ctx)
@@ -220,11 +231,11 @@ func (r *Reader) processData() {
 			case 26:
 				site, tag, err := decodeBits(data, 1, 8, 9, 16)
 				if err != nil {
-					fmt.Println("bug in calling decodeBits for 24b tag")
+					go r.errorCallback(fmt.Sprintf("bug in calling decodeBits for 26b tag: %v", err))
 					continue
 				}
 				if !checkParity(data, 0, 13, true) || !checkParity(data, 13, 13, false) {
-					fmt.Printf("Invalid parity for 26-bit tag: %s (%s)\n", tag, site)
+					go r.errorCallback(fmt.Sprintf("Invalid parity for 26-bit tag: %s (%s)", tag, site))
 					continue
 				}
 				fmt.Printf("Received 26-bit tag: %s (%s)\n", tag, site)
@@ -232,11 +243,11 @@ func (r *Reader) processData() {
 			case 34:
 				site, tag, err := decodeBits(data, 1, 17, 18, 16)
 				if err != nil {
-					fmt.Println("bug in calling decodeBits for 34b tag")
+					go r.errorCallback(fmt.Sprintf("bug in calling decodeBits for 34b tag: %v", err))
 					continue
 				}
 				if !checkParity(data, 0, 17, true) || !checkParity(data, 17, 17, false) {
-					fmt.Printf("Invalid parity for 34-bit tag: %s\n (%s)", tag, site)
+					go r.errorCallback(fmt.Sprintf("Invalid parity for 34-bit tag: %s (%s)", tag, site))
 					continue
 				}
 				fmt.Printf("Received 34-bit tag: %s (%s)\n", tag, site)
@@ -244,17 +255,17 @@ func (r *Reader) processData() {
 			case 37:
 				site, tag, err := decodeBits(data, 1, 19, 20, 16)
 				if err != nil {
-					fmt.Println("bug in calling decodeBits for 37b tag")
+					go r.errorCallback(fmt.Sprintf("bug in calling decodeBits for 37b tag: %v", err))
 					continue
 				}
 				if !checkParity(data, 0, 19, true) || !checkParity(data, 19, 18, false) {
-					fmt.Printf("Invalid parity for 37-bit tag: %s (%s)\n", tag, site)
+					go r.errorCallback(fmt.Sprintf("Invalid parity for 37-bit tag: %s (%s)", tag, site))
 					continue
 				}
 				fmt.Printf("Received 37-bit tag: %s (%s)\n", tag, site)
 				go r.callback(site, tag)
 			default:
-				fmt.Printf("Received unknown %d-bit value\n", len(data))
+				go r.errorCallback(fmt.Sprintf("Received unknown %d-bit value", len(data)))
 			}
 		}
 	}

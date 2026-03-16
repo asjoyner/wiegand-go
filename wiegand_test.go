@@ -8,7 +8,7 @@ import (
 
 func TestNewReader(t *testing.T) {
 	// Mock callback
-	callback := func(data string) {
+	callback := func(site, tag string) {
 		// pass
 	}
 
