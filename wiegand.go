@@ -114,7 +114,7 @@ func (r *Reader) watchPin(pin gpio.PinIO, bit byte) {
 		case <-r.ctx.Done():
 			return
 		default:
-			if pin.WaitForEdge(1*time.Second) && pin.Read() == gpio.Low { // Wait indefinitely for edge
+			if pin.WaitForEdge(1*time.Second) { // trust the kernel-latched falling edge; re-reading the pin here raced the ~50us Wiegand pulse and dropped bits (esp. the first edge after idle)
 				r.mu.Lock()
 				r.data = append(r.data, bit)
 				r.lastBitTime = time.Now()
